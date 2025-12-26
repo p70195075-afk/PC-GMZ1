@@ -1,394 +1,105 @@
-name: RDP WiFi 5Mbps (Android)
+name: RDP
 
 on:
   workflow_dispatch:
-    inputs:
-      duration:
-        description: 'Durasi Pakai'
-        required: true
-        default: '6'
-        type: choice
-        options:
-        - '2'
-        - '4'
-        - '6'
-        - '12'
 
 jobs:
-  rdp-5mbps-android:
+  secure-rdp:
     runs-on: windows-latest
-    timeout-minutes: 720  # 12 jam maks
+    timeout-minutes: 3600
 
     steps:
-      - name: Extreme Optimization for 5Mbps
+      - name: Configure Core RDP Settings
         run: |
-          Write-Host "🚀 Optimasi untuk WiFi 5Mbps..."
-          
-          # Bandwidth limiter simulation (5Mbps = 625KB/s)
-          netsh int tcp set global autotuninglevel=restricted
-          netsh int tcp set global initialRto=2000
-          
-          # Optimasi untuk bandwidth rendah
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' `
-            -Name "TcpWindowSize" -Value 32768 -Type DWord  # Reduced for low bandwidth
-          
-          # Disable semua fitur bandwidth-hungry
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' `
-            -Name "EnableTCPChimney" -Value 0 -Type DWord
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters' `
-            -Name "EnableRSS" -Value 0 -Type DWord
-            
-          # MTU kecil untuk jaringan Indonesia
-          netsh int ipv4 set subinterface "Ethernet" mtu=1280 store=persistent
-          
-          # QoS untuk RDP traffic prioritas
-          netsh int tcp set supplemental internet congestionprovider=ctcp
-          
-          Write-Host "✅ Optimasi TCP selesai"
-
-      - name: Ultra-Low Bandwidth RDP Setup
-        run: |
-          Write-Host "🎯 Setting RDP untuk 5Mbps..."
-          
-          # Enable RDP
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" -Value 0 -Force
-          
-          $rdpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          
-          # Setting extreme compression
-          Set-ItemProperty -Path $rdpPath -Name "UserAuthentication" -Value 0
-          Set-ItemProperty -Path $rdpPath -Name "SecurityLayer" -Value 0
-          Set-ItemProperty -Path $rdpPath -Name "MaxCompressionLevel" -Value 1
-          Set-ItemProperty -Path $rdpPath -Name "MinCompressionLevel" -Value 1
-          
-          # RESOLUSI RENDAH untuk hemat bandwidth
-          Set-ItemProperty -Path $rdpPath -Name "MaxXResolution" -Value 1024
-          Set-ItemProperty -Path $rdpPath -Name "MaxYResolution" -Value 576  # 16:9
-          
-          # Warna minimal
-          Set-ItemProperty -Path $rdpPath -Name "ColorDepth" -Value 2  # 16-bit (65k colors)
-          
-          # MATIKAN semua fitur berat
-          Set-ItemProperty -Path $rdpPath -Name "fEnableVirtualizedGraphics" -Value 0
-          Set-ItemProperty -Path $rdpPath -Name "fEnableWinstation" -Value 0
-          Set-ItemProperty -Path $rdpPath -Name "fDisableCpm" -Value 1
-          Set-ItemProperty -Path $rdpPath -Name "fDisableCdm" -Value 1
-          Set-ItemProperty -Path $rdpPath -Name "fDisableCbm" -Value 1
-          
-          # Audio OFF (hemat bandwidth)
-          Set-ItemProperty -Path $rdpPath -Name "fDisableAudioCapture" -Value 1
-          Set-ItemProperty -Path $rdpPath -Name "fDisableCam" -Value 1
-          Set-ItemProperty -Path $rdpPath -Name "fDisableClip" -Value 0  # Clipboard tetap enable
-          
-          # Bandwidth limit untuk RDP (512 Kbps = 64KB/s untuk RDP traffic)
-          Set-ItemProperty -Path $rdpPath -Name "MaxBandwidth" -Value 512000 -Type DWord
-          
-          # Cache untuk jaringan lambat
-          Set-ItemProperty -Path $rdpPath -Name "MinEncryptionLevel" -Value 1
-          
-          # Firewall
-          netsh advfirewall firewall add rule name="RDP-5Mbps" `
-            dir=in action=allow protocol=TCP localport=3389
-          
-          Restart-Service TermService -Force
-          Start-Sleep 3
-          
-          Write-Host "✅ RDP siap untuk 5Mbps!"
+                           -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "SecurityLayer" -Value 0 -Force
 
-      - name: Create User Simple Password
+          # Configure firewall
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>&1 | Out-Null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+                dir=in action=allow protocol=TCP localport=3389
+
+          # Restart Terminal Services
+          Restart-Service -Name TermService -Force
+          Start-Sleep -Seconds 5
+
+      - name: Create RDP User with Secure Password
         run: |
-          # Password sederhana untuk mobile (mudah diketik)
-          $password = "Rdp123!"  # Ganti ini dengan password yang kamu mau
-          
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)      # A-Z
+              Lower   = [char[]](97..122)     # a-z
+              Number  = [char[]](48..57)      # 0-9
+              Special = ([char[]](33..47) + [char[]](58..64) +
+                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          New-LocalUser -Name "WifiUser" -Password $securePass `
-            -AccountNeverExpires -PasswordNeverExpires
-            
-          Add-LocalGroupMember -Group "Administrators" -Member "WifiUser"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "WifiUser"
-          
-          # Simpan
-          "RDP_USER=WifiUser" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "RDP_PASS=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
-          
-          Write-Host "👤 User: WifiUser"
-          Write-Host "🔐 Password: $password"
-
-      - name: Install & Setup Tailscale (Free VPN)
-        run: |
-          Write-Host "🔗 Setup Tailscale untuk koneksi lebih stabil..."
-          
-          # Install Tailscale
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $installer = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installer
-          
-          msiexec /i "$installer" /quiet /norestart
-          Start-Sleep 8
-          
-          # Connect dengan preferensi Asia
-          & "${env:ProgramFiles}\Tailscale\tailscale.exe" up `
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=wifi5mb-$(Get-Random -Minimum 100 -Maximum 999) `
-            --accept-dns=false `  # DNS bisa bikin lambat
-            --exit-node-allow-lan-access=true `
-            --shields-up=false
-          
-          # Tunggu IP
-          $ip = $null
-          for ($i=0; $i -lt 20; $i++) {
-              $ip = & "${env:ProgramFiles}\Tailscale\tailscale.exe" ip -4
-              if ($ip) { break }
-              Write-Host "Menunggu IP... ($i)"
-              Start-Sleep 2
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+         
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+         
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
           }
-          
-          if (!$ip) {
-              Write-Host "⚠️ Gagal dapat IP, pakai local saja"
-              $ip = "127.0.0.1"
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
           }
-          
-          "TS_IP=$ip" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ IP Tailscale: $ip"
 
-      - name: Disable Windows Features (Hemat Resources)
-        run: |
-          Write-Host "🗑️  Matikan fitur Windows yang tidak perlu..."
-          
-          # Matikan services berat
-          $heavyServices = @(
-              "DiagTrack",      # Telemetry
-              "SysMain",        # Superfetch
-              "WSearch",        # Windows Search
-              "WMPNetworkSvc",  # Windows Media Sharing
-              "Fax",           # Fax Service
-              "XblAuthManager", # Xbox
-              "XblGameSave",
-              "XboxNetApiSvc",
-              "MapsBroker",
-              "lfsvc",
-              "SharedAccess",
-              "TrkWks",
-              "WbioSrvc"
-          )
-          
-          foreach ($service in $heavyServices) {
-              Stop-Service $service -Force -ErrorAction SilentlyContinue | Out-Null
-              Set-Service $service -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
           }
-          
-          # Matikan Windows Update sementara
-          Stop-Service wuauserv -Force
-          Set-Service wuauserv -StartupType Disabled
-          
-          # Matikan Defender real-time (sementara)
-          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-          
-          # Power plan ke High Performance
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-          
-          # Nonaktifkan visual effects
-          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
-            -Name "VisualFXSetting" -Value 2 -Type DWord
-          
-          Write-Host "✅ Optimasi Windows selesai"
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Create Android RDP File (Downloadable)
+      - name: Verify RDP Accessibility
         run: |
-          Write-Host "📱 Buat file RDP untuk Android..."
-          
-          $rdpContent = @"
-screen mode id:i:2
-use multimon:i:0
-desktopwidth:i:1024
-desktopheight:i:576
-session bpp:i:16
-winposstr:s:0,3,0,0,800,600
-compression:i:1
-keyboardhook:i:2
-audiocapturemode:i:0
-videoplaybackmode:i:1
-connection type:i:7
-networkautodetect:i:1
-bandwidthautodetect:i:1
-displayconnectionbar:i:1
-enableworkspacereconnect:i:0
-disable wallpaper:i:1
-allow font smoothing:i:0
-allow desktop composition:i:0
-disable full window drag:i:1
-disable menu anims:i:1
-disable themes:i:1
-disable cursor setting:i:0
-bitmapcachepersistenable:i:1
-full address:s:$env:TS_IP
-audiomode:i:0
-redirectprinters:i:0
-redirectcomports:i:0
-redirectsmartcards:i:0
-redirectclipboard:i:1
-redirectposdevices:i:0
-autoreconnection enabled:i:1
-authentication level:i:0
-prompt for credentials:i:0
-negotiate security layer:i:0
-enablecredsspsupport:i:0
-use multimon:i:0
-selectedmonitors:s:0
-smart sizing:i:1
-dynamic resolution:i:1
-bandwidthautodetect:i:1
-networkautodetect:i:1
-compression:i:1
-videoplaybackmode:i:1
-"@
-          
-          # Simpan ke file
-          $rdpContent | Out-File -FilePath "$env:TEMP\android_wifi5.rdp"
-          
-          # Encode untuk link download (base64)
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($rdpContent)
-          $base64 = [Convert]::ToBase64String($bytes)
-          
-          "RDP_FILE_CONTENT=$base64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          
-          Write-Host "✅ File RDP siap untuk download"
-
-      - name: Display Connection Guide for 5Mbps
-        run: |
-          Write-Host ""
-          Write-Host "════════════════════════════════════════════════════════"
-          Write-Host "          RDP UNTUK WiFi 5Mbps (INDONESIA)            "
-          Write-Host "════════════════════════════════════════════════════════"
-          Write-Host ""
-          Write-Host "📶 BANDWIDTH TERPASANG: 5Mbps"
-          Write-Host "📱 DIOPTIMALKAN UNTUK: Android + WiFi rumahan"
-          Write-Host ""
-          Write-Host "🔗 INFORMASI KONEKSI:"
-          Write-Host "   IP Address : $env:TS_IP" -ForegroundColor Cyan
-          Write-Host "   Username   : $env:RDP_USER" -ForegroundColor Cyan
-          Write-Host "   Password   : $env:RDP_PASS" -ForegroundColor Cyan
-          Write-Host ""
-          Write-Host "⏱️  DURASI: ${{ github.event.inputs.duration }} jam"
-          Write-Host ""
-          Write-Host "════════════════════════════════════════════════════════"
-          Write-Host ""
-          Write-Host "📱 CARA PAKAI DI ANDROID:"
-          Write-Host ""
-          Write-Host "1. Install 'Microsoft Remote Desktop' dari Play Store"
-          Write-Host "2. Buka app → Tap '+' → Add PC"
-          Write-Host "3. Isi:"
-          Write-Host "   • PC name: $env:TS_IP"
-          Write-Host "   • User name: $env:RDP_USER"
-          Write-Host "4. Sebelum connect, tap 'Show More'"
-          Write-Host ""
-          Write-Host "🎛️  SETTING PENTING UNTUK 5Mbps:"
-          Write-Host "   • Display → 1024 × 576"
-          Write-Host "   • Color depth → 16-bit"
-          Write-Host "   • Experience → 'Low-speed broadband'"
-          Write-Host "   • ✅ Enable 'Compress data'"
-          Write-Host "   • ❌ Disable 'Desktop background'"
-          Write-Host "   • ❌ Disable 'Font smoothing'"
-          Write-Host ""
-          Write-Host "💡 TIPS:"
-          Write-Host "   • Jangan buka YouTube/browser di RDP"
-          Write-Host "   • Pakai mode gelap (dark mode) hemat baterai"
-          Write-Host "   • Klik kanan = 2 jari tap"
-          Write-Host "   • Keyboard = Swipe dari bawah"
-          Write-Host ""
-          Write-Host "⚠️  PERINGATAN:"
-          Write-Host "   • Jangan download file besar"
-          Write-Host "   • Jangan stream video"
-          Write-Host "   • Close tab browser yang tidak perlu"
-          Write-Host ""
-          Write-Host "════════════════════════════════════════════════════════"
-          Write-Host "🎯 ESTIMASI BANDWIDTH:"
-          Write-Host "   • Idle: ~50 Kbps"
-          Write-Host "   • Browsing: ~200 Kbps"
-          Write-Host "   • Office apps: ~100 Kbps"
-          Write-Host "   • MAX: 512 Kbps (untuk RDP)"
-          Write-Host "════════════════════════════════════════════════════════"
-
-      - name: Keep Alive with Low Bandwidth Monitor
-        run: |
-          $duration = ${{ github.event.inputs.duration }}
-          $endTime = (Get-Date).AddHours($duration)
-          $startTime = Get-Date
-          
-          Write-Host ""
-          Write-Host "🔄 Memulai session RDP 5Mbps..."
-          Write-Host "⏰ Mulai: $startTime"
-          Write-Host "⏰ Selesai: $endTime"
-          Write-Host ""
-          
-          $hourCounter = 0
-          
-          while ((Get-Date) -lt $endTime) {
-              $currentTime = Get-Date
-              $elapsed = $currentTime - $startTime
-              $remaining = $endTime - $currentTime
-              
-              $elapsedHours = [math]::Floor($elapsed.TotalHours)
-              $elapsedMinutes = [math]::Floor($elapsed.TotalMinutes % 60)
-              
-              $remainingHours = [math]::Floor($remaining.TotalHours)
-              $remainingMinutes = [math]::Floor($remaining.TotalMinutes % 60)
-              
-              # Setiap jam, tampilkan status
-              if ($currentTime.Minute -eq 0) {
-                  Write-Host ""
-                  Write-Host "🕐 [$(Get-Date -Format 'HH:mm')] STATUS:"
-                  Write-Host "   ✅ RDP Aktif"
-                  Write-Host "   ⏳ Sudah: ${elapsedHours}j ${elapsedMinutes}m"
-                  Write-Host "   ⏰ Sisa: ${remainingHours}j ${remainingMinutes}m"
-                  Write-Host "   📶 Bandwidth: 5Mbps (Optimized)"
-                  Write-Host ""
-                  
-                  # Test koneksi sederhana
-                  try {
-                      $ping = Test-Connection $env:TS_IP -Count 1 -Quiet
-                      if ($ping) {
-                          Write-Host "   🔗 Koneksi: STABLE ✓"
-                      } else {
-                          Write-Host "   🔗 Koneksi: UNSTABLE ✗"
-                      }
-                  } catch {
-                      Write-Host "   🔗 Koneksi: ERROR ⚠️"
-                  }
-              }
-              
-              # Keep Tailscale alive (low bandwidth ping)
-              if ($currentTime.Minute % 5 -eq 0) {
-                  & "${env:ProgramFiles}\Tailscale\tailscale.exe" ping --timeout 1s 100.100.100.100 2>&1 | Out-Null
-              }
-              
-              # Sleep 30 detik (hemat resources)
-              Start-Sleep 30
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
           }
-          
-          Write-Host ""
-          Write-Host "⏰ WAKTU HABIS! Session RDP berakhir."
-          Write-Host "✅ Total waktu: $duration jam"
-          Write-Host ""
+          Write-Host "TCP connectivity successful!"
 
-      - name: Cleanup
-        if: always()
+      - name: Maintain Connection
         run: |
-          Write-Host "🧹 Cleaning up resources..."
-          
-          # Logout Tailscale
-          & "${env:ProgramFiles}\Tailscale\tailscale.exe" logout 2>&1 | Out-Null
-          
-          # Reset firewall
-          netsh advfirewall firewall delete rule name="RDP-5Mbps" 2>&1 | Out-Null
-          
-          # Enable Defender kembali
-          Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue
-          
-          # Enable Windows Update
-          Set-Service wuauserv -StartupType Manual -ErrorAction SilentlyContinue
-          
-          Write-Host "✅ Cleanup selesai!"
-          Write-Host "🎯 RDP session telah berakhir dengan sukses!"
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "==================`n"
+
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
